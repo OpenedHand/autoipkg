@@ -2,6 +2,11 @@
 #
 # autoipkg.sh ( Version 0.3 )
 #
+# Revision..........: $Revision: $
+# Last Modified By..: $Author: $
+# Last Modified.....: $Date: $
+# Repo URL..........: $URL: $
+#
 # A quick hack to automatically build ipkgs from autoconf based source 
 # packages.
 #
