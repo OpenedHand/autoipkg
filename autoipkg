@@ -1,0 +1,176 @@
+#!/bin/sh
+#
+# autoipkg.sh ( Version 0.3 )
+#
+# A quick hack to automatically build ipkgs from autoconf based source 
+# packages.
+#
+# Usage is like:
+# 
+#    DEPS=xlibs DESC="foo" MAINTAINER='foo@foo.com' autoipkg --enable-foo
+#
+# Or Alternatively a .autopkg in the working dir will be checked for and 
+# params set there used. 
+#
+# The following Params are understood;
+#
+#  PACKAGE              Package name ( auto detected )
+#  VERSION              Package version ( auto detected )
+#  ARCH                 Package arch ( defualts to arm )
+#  REV			Package Revision
+#  MINOR_VERSION        Extra Version info - eg '.12345'
+#  MAINTAINER           Maintainer, defaults to user@hostname
+#  SOURCE		Source URL
+#  DEPS			List of package deps
+#  DESC			Package description
+#  CONFIGURE_ARGS	Args to pass to configure ( prefix is set to /usr )
+#  EXTRA_CONTROL	Any extra lines to add to control
+#  INTERACTIVE		Set to 'n' for non-interactive build 
+#    POSTINST		Postinst file location ( only for non-interactive )
+#    POSTRM		postrm file location   ( only for non-interactive )
+#
+# Copyright Matthew Allum 2003 <mallum@handhelds.org> 
+#
+
+if [ "$1" = '-h' ]; then
+   echo "See autoipkg source for usage instructions."
+   exit 0
+fi 
+
+if [ -r .autoipkg ] 
+then
+source ./.autoipkg
+fi
+
+if [ -z "$CONFIGURE_ARGS" ]
+then
+CONFIGURE_ARGS="$@"
+fi
+
+./configure --prefix=/usr $CONFIGURE_ARGS && make clean && make && make DESTDIR=$PWD/Build install-strip
+
+if [ -d $PWD/Build ] 
+then
+
+## Clear out any uneeded bloat 
+
+   rm -fr $PWD/Build/usr/lib/*.la
+   rm -fr $PWD/Build/usr/lib/*.a
+   rm -fr $PWD/Build/usr/lib/*.so
+   rm -fr $PWD/Build/usr/include
+   rm -fr $PWD/Build/usr/lib/pkgconfig
+   rm -fr $PWD/Build/usr/man
+   rm -fr $PWD/Build/usr/share/man
+   rm -fr $PWD/Build/usr/doc
+   rm -fr $PWD/Build/usr/share/doc
+
+   ## brute force .a & .la removal - mainly for loadable mods ##
+   for lafile in `find $PWD/Build -name '*.la'`
+   do
+      rm -fr $lafile
+   done
+
+   for afile in `find $PWD/Build -name '*.a'`
+   do
+      rm -fr $afile
+   done
+
+   ## brute false strip, as install-strip seems to miss things
+   for file in `find $PWD/Build`
+   do
+	strip $file 2>/dev/null
+   done
+
+   mkdir -p ./Build/CONTROL
+
+if [ -z "$VERSION" ]; then
+   VERSION=`grep '#define VERSION' config.h | cut -d ' ' -f3 | sed -e 's/"//g' | head -n1`
+fi
+
+if [ -z "$PACKAGE" ]; then
+   PACKAGE=`grep '#define PACKAGE ' config.h | cut -d ' ' -f3 | sed -e 's/"//g'| head -n1`
+fi
+   cat <<STOP  > ./Build/CONTROL/control
+Package: $PACKAGE
+Section: x11
+Priority: optional
+Version: $VERSION$MINOR_VERSION-${REV=0}
+Architecture: ${ARCH=arm}
+Maintainer: ${MAINTAINER="$(id -un)@$HOSTNAME"}
+Depends: ${DEPS}
+Description: ${DESC=no description supplied}
+Source: ${SOURCE=no source URL supplied}
+$EXTRA_CONTROL
+.
+STOP
+
+if [ $INTERACTIVE != 'n' ]
+then
+echo
+echo "  Build complete. Ipkg Control File is;"
+echo "========================================="
+echo
+cat ./Build/CONTROL/control
+echo
+echo "Edit control [y/N] ?"
+read Q
+if [ $Q = 'y' ]
+then
+$EDITOR ./Build/CONTROL/control
+fi
+
+echo "Run ldconfig in postinst [y/N] ?"
+read Q
+if [ $Q = 'y' ]
+then
+   cat <<STOP  > ./Build/CONTROL/postinst
+#!/bin/sh
+echo "- Running ldconfig"
+ldconfig
+exit 0
+STOP
+chmod u+x ./Build/CONTROL/postinst
+fi
+
+echo
+echo "Shall I now build the ipkg [y/N] ?"
+read Q
+if [ $Q = 'y' ]
+then
+   fakeroot ipkg-build -o root -g root ./Build
+fi
+
+echo
+echo "Shall I delete the build directory [y/N] ?"
+read Q
+if [ $Q = 'y' ]
+then
+   rm -fr ./Build
+fi
+
+else
+
+if [[ -n "$POSTINST" && -e "$POSTINST" ]]
+then
+echo "copying $POSTINST" 
+cp $POSTINST ./Build/CONTROL/
+fi
+
+if [[ -n "$POSTRM" && -e "$POSTRM" ]]
+then
+echo "copying $POSTRM" 
+cp $POSTRM ./Build/CONTROL/
+fi
+
+fakeroot ipkg-build -o root -g root ./Build
+
+rm -fr ./Build
+
+fi
+
+else
+   echo 
+   echo "Build failed"
+   exit 1
+fi
+
